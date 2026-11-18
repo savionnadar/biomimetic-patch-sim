@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glue-free, self-dosing patch: how it works</title>
+<style>
+  :root {
+    --ink: #0E2A30; --ink2: #14424B; --mist: #EEF5F3; --line: #C9D8D5; --grey: #6B7F86;
+    --frog: #2E9E6B; --octo: #2F6FD6; --amber: #E3A72F; --red: #D9534F; --drug: #7B3FA0;
+    --sans: Calibri, "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    --serif: Cambria, Georgia, "Times New Roman", serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font-family: var(--sans); line-height: 1.4; }
+  header { background: var(--ink); color: #fff; padding: 14px clamp(14px, 3vw, 32px); }
+  header p { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--amber); }
+  header h1 { margin: 2px 0 0; font-family: var(--serif); font-size: clamp(20px, 2.6vw, 32px); text-wrap: balance; }
+  main { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr); gap: clamp(14px, 2vw, 28px);
+         max-width: 1500px; margin: 0 auto; padding: clamp(12px, 2vw, 24px) clamp(14px, 3vw, 32px); align-items: start; }
+  .stage { position: relative; aspect-ratio: 16 / 10; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #F7FAF9; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .step { font-size: 13px; font-weight: 700; letter-spacing: .06em; color: var(--grey); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .chip { padding: 2px 10px; border-radius: 999px; color: #fff; letter-spacing: 0; font-size: 13px; }
+  h2 { font-family: var(--serif); font-size: clamp(21px, 2.1vw, 30px); margin: 6px 0 8px; line-height: 1.15; text-wrap: balance; }
+  #caption { font-size: clamp(16px, 1.35vw, 20px); margin: 0; min-height: 7.2em; }
+  .bar { height: 4px; background: var(--mist); border-radius: 2px; margin: 12px 0; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ink2); }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; cursor: pointer; }
+  .btn { border: 1px solid var(--ink2); background: #fff; color: var(--ink); border-radius: 8px; padding: 7px 14px; font-weight: 700; min-height: 40px; }
+  .btn:hover { background: var(--mist); }
+  .dots { display: flex; gap: 6px; margin-left: auto; }
+  .dots button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--grey); font-weight: 700; padding: 0; }
+  .dots button[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+  button:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+  .readouts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 10px; }
+  .tile { background: var(--mist); border-radius: 10px; padding: 9px 12px; }
+  .tile small { display: block; font-size: 12.5px; color: var(--grey); font-weight: 700; }
+  .tile b { font-family: var(--serif); font-size: clamp(22px, 2vw, 30px); font-variant-numeric: tabular-nums; }
+  .tile span { font-size: 12.5px; display: block; color: var(--ink2); min-height: 1.3em; }
+  #fired { color: var(--octo); font-weight: 700; }
+  svg { width: 100%; height: auto; display: block; }
+  .legend { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 14px; font-size: 13.5px; }
+  .legend li { display: flex; align-items: center; gap: 7px; }
+  .legend i { width: 14px; height: 14px; border-radius: 3px; flex: none; border: 1px solid rgba(14,42,48,.25); }
+  .legend i.dot { border-radius: 50%; }
+  .note { font-size: 12.5px; color: var(--grey); margin: 12px 0 0; }
+  @media (max-width: 820px) {
+    main { grid-template-columns: 1fr; }
+    .left { display: contents; }
+    .stage { aspect-ratio: 5 / 4; order: 1; position: sticky; top: 6px; z-index: 2; box-shadow: 0 0 0 8px #fff; }
+    main > section { order: 2; }
+    .legend { order: 3; margin-top: 0; }
+    #caption { min-height: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <p>BIOMIMICRY PROJECT</p>
+  <h1>A glue-free patch that controls its own dose: how it works</h1>
+</header>
+<main>
+  <div class="left">
+    <div class="stage"><canvas id="cv" role="img" aria-label="Animated cross-section of the patch on skin. The text beside it describes each step."></canvas></div>
+    <ul class="legend" aria-label="Colour key">
+      <li><i style="background:#6B7F86"></i>Backing film (TPU)</li>
+      <li><i style="background:#E3A72F"></i>Gel that stores the drug</li>
+      <li><i style="background:#2E9E6B"></i>Tree-frog film (silicone pillars)</li>
+      <li><i style="background:#2F6FD6"></i>Gel needles</li>
+      <li><i style="background:#9CC7F0"></i>Sweat</li>
+      <li><i class="dot" style="background:#7B3FA0"></i>Drug</li>
+      <li><i style="background:#D9B08C"></i>Dead outer skin layer</li>
+      <li><i style="background:#F0D2BA"></i>Living epidermis</li>
+      <li><i style="background:#F8EBE0"></i>Dermis</li>
+      <li><i class="dot" style="background:#D9534F"></i>Small blood vessel</li>
+    </ul>
+  </div>
+  <section aria-label="Explanation">
+    <div class="step"><span id="stepno">STEP 1 OF 6</span><span class="chip" id="chip"></span></div>
+    <h2 id="title"></h2>
+    <p id="caption" aria-live="polite"></p>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="controls">
+      <button class="btn" id="play" aria-label="Pause the animation">Pause</button>
+      <button class="btn" id="restart">Restart</button>
+      <div class="dots" id="dots" role="group" aria-label="Jump to a step"></div>
+    </div>
+    <div class="readouts">
+      <div class="tile"><small>NEEDLE TEMPERATURE</small><b id="temp">25 °C</b><span id="fired">Trigger at 35-37 °C</span></div>
+      <div class="tile"><small>TIME SINCE THE DOSE FIRED</small><b id="clock">0 h</b><span>Release lasts about 2 days</span></div>
+    </div>
+    <svg viewBox="0 0 320 168" role="img" aria-label="Chart: drug released over 48 hours. A fast rise in the first 2 hours, then a slow rise. The curve shape is illustrative.">
+      <defs><clipPath id="reveal"><rect id="clip" x="34" y="0" width="0" height="168"/></clipPath></defs>
+      <text x="34" y="11" font-size="11" font-weight="700" fill="#0E2A30">Drug released over time (curve shape is illustrative)</text>
+      <line x1="34" y1="134" x2="308" y2="134" stroke="#6B7F86"/><line x1="34" y1="20" x2="34" y2="134" stroke="#6B7F86"/>
+      <line x1="45.4" y1="20" x2="45.4" y2="134" stroke="#6B7F86" stroke-dasharray="3 3"/>
+      <g font-size="10.5" fill="#6B7F86" text-anchor="middle">
+        <text x="34" y="147">0</text><text x="45.4" y="147">2</text><text x="102.5" y="147">12</text><text x="171" y="147">24</text><text x="239.5" y="147">36</text><text x="308" y="147">48</text>
+        <text x="171" y="162">hours on skin</text>
+      </g>
+      <text x="50" y="126" font-size="10.5" fill="#14424B">first 2 h: fast burst</text>
+      <text x="150" y="62" font-size="10.5" fill="#14424B">then slow, steady release</text>
+      <path id="curve" fill="none" stroke="#7B3FA0" stroke-width="2.5" clip-path="url(#reveal)"/>
+      <circle id="mark" r="4.5" fill="#7B3FA0" stroke="#fff" stroke-width="1.5" cx="34" cy="134"/>
+    </svg>
+    <p class="note">Sizes are drawn to scale (see the scale bar). Speeds, the amount the needle shrinks and the curve shape are illustrative, not measured. Numbers: Meng et al., Phil. Trans. R. Soc. A 377: 20190131 (2019); Zhu et al., Sci. Adv. 9: eadh2213 (2023).</p>
+  </section>
+</main>
+<script>
+(() => {
+  "use strict";
+  /* ---------- design dimensions, micrometres (same as the design drawing) ---------- */
+  const PIL_H = 4.5, PIL_W = 10, PIL_P = 12, FILM_TOP = 54.5, RES_TOP = 354.5, BACK_TOP = 384.5;
+  const COLL_D = 30, NEEDLE_L = 500, NEEDLE_HW = 150, PATCH_W = 2700, SC = 15, EPI = 100;
+  const NEEDLES = [450, 1350, 2250];
+  const ISLANDS = [[0, 250], [650, 1150], [1550, 2050], [2450, 2700]];
+  const COLLECT = [[0, 50], [850, 950], [1750, 1850], [2650, 2700]];
+  const PILLARS = [[50, 250, -1], [650, 850, 1], [950, 1150, -1], [1550, 1750, 1], [1850, 2050, -1], [2450, 2650, 1]]; // dir = towards nearest collector
+  const VESSELS = [[200, -180], [700, -330], [1100, -200], [1600, -340], [2000, -190], [2500, -320]];
+  const COL = { air: "#F7FAF9", sc: "#D9B08C", epi: "#F0D2BA", derm: "#F8EBE0", back: "#6B7F86", res: "#E3A72F", film: "#2E9E6B",
+                needle: "#2F6FD6", water: "#9CC7F0", drug: "#7B3FA0", red: "#D9534F", ink: "#0E2A30" };
+
+  /* ---------- story ---------- */
+  const STAGES = [
+    { dur: 6, chip: ["Our design", "#6B7F86"], title: "The patch, drawn to scale",
+      text: "Four parts: a backing film, a gel that stores the drug, a soft film with a tree-frog face, and gel needles. The body of the patch is about 0.4 mm thick and the needles are half a millimetre long." },
+    { dur: 7, chip: ["Blue-ringed octopus", "#2F6FD6"], title: "Press on: the needles pass the skin barrier",
+      text: "The octopus first punctures the crab's shell. Our needles do the same to the dead outer layer of skin, which is only about 15 µm thick but keeps most drugs out." },
+    { dur: 9, chip: ["Tree frog", "#2E9E6B"], title: "Grip without glue",
+      text: "Six-sided pillars, 10 µm wide, meet the skin. A very thin film of moisture between each pillar and the skin holds them together, the way a wet toe pad holds a leaf. No glue chemicals touch the skin." },
+    { dur: 7, chip: ["Tree frog", "#2E9E6B"], title: "Sweat drains away",
+      text: "Extra sweat moves along the 2 µm channels between the pillars into wider collector channels, which lead to the edge of the patch. The skin underneath does not stay soaked." },
+    { dur: 8, chip: ["Blue-ringed octopus", "#2F6FD6"], title: "Body heat fires the dose",
+      text: "The needle gel contains PNIPAm, a polymer that shrinks when it warms to 35-37 °C. As it shrinks it squeezes the drug out, like the octopus pushing venom through the hole. No battery is needed." },
+    { dur: 9, chip: ["Blue-ringed octopus", "#2F6FD6"], title: "Steady release for about two days",
+      text: "After the first burst, the needles keep releasing drug slowly and it reaches the small blood vessels. The octopus paper measured 2-3 times more drug in the first 2 hours at body temperature, then release for about 2 days." }
+  ];
+  const CAMS = [
+    { cx: 1350, cy: 215, w: 2900, h: 1700 },
+    { cx: 1350, cy: -60, w: 2900, h: 1100 },
+    { cx: 815, cy: -4, w: 130, h: 70 },
+    { cx: 900, cy: 18, w: 520, h: 200 },
+    { cx: 1350, cy: -170, w: 760, h: 620 },
+    { cx: 1350, cy: -150, w: 2900, h: 1150 }
+  ];
+  const TRANS = [1.2, 5.6, 2.6, 2.0, 2.0, 2.0];           // seconds spent moving the camera at the start of each step
+  const TRIGGER_P = 0.3;                                   // point in step 5 where the gel reaches 35 °C
+  const STARTS = []; let TOTAL = 0;
+  STAGES.forEach(s => { STARTS.push(TOTAL); TOTAL += s.dur; });
+
+  /* ---------- helpers ---------- */
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, u) => a + (b - a) * u;
+  const ease = u => u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  const rnd = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  const $ = id => document.getElementById(id);
+
+  const cv = $("cv"), g = cv.getContext("2d");
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  new ResizeObserver(resize).observe(cv); resize();
+
+  /* ---------- state ---------- */
+  let T = 0, last = performance.now(), shownStage = -1;
+  let playing = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function locate() {
+    let i = STAGES.length - 1;
+    while (i > 0 && T < STARTS[i]) i--;
+    return [i, clamp((T - STARTS[i]) / STAGES[i].dur)];
+  }
+
+  /* ---------- camera ---------- */
+  let cam = { cx: 0, cy: 0, s: 1 };
+  function setCamera(i, p) {
+    const a = CAMS[(i + STAGES.length - 1) % STAGES.length], b = CAMS[i];
+    const u = ease(clamp(p * STAGES[i].dur / TRANS[i]));
+    const w = Math.exp(lerp(Math.log(a.w), Math.log(b.w), u)), h = Math.exp(lerp(Math.log(a.h), Math.log(b.h), u));
+    cam = { cx: lerp(a.cx, b.cx, u), cy: lerp(a.cy, b.cy, u), s: Math.min(W / w, H / h) };
+  }
+  const X = x => W / 2 + (x - cam.cx) * cam.s, Y = y => H / 2 - (y - cam.cy) * cam.s;
+  function rect(x0, y0, x1, y1, col) { g.fillStyle = col; g.fillRect(X(x0), Y(y1), (x1 - x0) * cam.s, (y1 - y0) * cam.s); }
+  function disc(x, y, r, col, minPx = 0) { g.fillStyle = col; g.beginPath(); g.arc(X(x), Y(y), Math.max(r * cam.s, minPx), 0, 6.2832); g.fill(); }
+
+  /* ---------- labels drawn on the picture ---------- */
+  function callout(x, y, text, ux, uy, alpha) {
+    if (alpha <= 0) return;
+    const fs = clamp(W * 0.017, 11.5, 19), ax = X(x), ay = Y(y);
+    g.font = `600 ${fs}px Calibri, "Segoe UI", system-ui, Arial, sans-serif`;
+    const tw = g.measureText(text).width, bw = tw + fs * 1.1, bh = fs * 1.75;
+    const bx = clamp(ax + ux * fs - bw / 2, 6, W - bw - 6), by = clamp(ay + uy * fs - bh / 2, 6, H - bh - 6);
+    g.globalAlpha = alpha;
+    g.strokeStyle = COL.ink; g.lineWidth = 1.25; g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx + bw / 2, by + bh / 2); g.stroke();
+    g.fillStyle = COL.ink; g.beginPath(); g.arc(ax, ay, 3, 0, 6.2832); g.fill();
+    g.fillStyle = "#fff"; g.beginPath(); g.roundRect(bx, by, bw, bh, 6); g.fill(); g.stroke();
+    g.fillStyle = COL.ink; g.textBaseline = "middle"; g.textAlign = "left"; g.fillText(text, bx + fs * 0.55, by + bh / 2 + 1);
+    g.globalAlpha = 1;
+  }
+  const fade = (p, from, to = 2) => clamp((p - from) / 0.06) * clamp((to - p) / 0.06);
+
+  function scaleBar() {
+    const pick = [5, 10, 20, 50, 100, 200, 500, 1000].filter(v => v * cam.s <= W * 0.24).pop() || 5;
+    const fs = clamp(W * 0.016, 11, 17), x = 14, y = H - 16, len = pick * cam.s;
+    const label = pick >= 1000 ? "1 mm" : pick + " µm";
+    g.font = `600 ${fs}px Calibri, "Segoe UI", system-ui, Arial, sans-serif`;
+    g.fillStyle = "rgba(255,255,255,.88)"; g.beginPath(); g.roundRect(x - 6, y - fs - 12, Math.max(len, g.measureText(label).width) + 12, fs + 22, 6); g.fill();
+    g.fillStyle = COL.ink; g.fillRect(x, y - 4, len, 4);
+    g.textAlign = "left"; g.textBaseline = "alphabetic"; g.fillText(label, x, y - 9);
+  }
+
+  /* ---------- the picture ---------- */
+  function draw() {
+    const [i, p] = locate();
+    setCamera(i, p);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = COL.air; g.fillRect(0, 0, W, H);
+
+    // how far the patch is from the skin, in µm
+    let lift = 0;
+    if (i === 0) lift = 620;
+    else if (i === 1) lift = lerp(620, 6, ease(clamp(p / 0.8)));
+    else if (i === 2) lift = lerp(6, 0, ease(clamp((p - 0.4) / 0.15)));
+    const touching = i > 2 || (i === 2 && p >= 0.55);
+    const chanLevel = i > 2 ? 0.6 : i === 2 ? 0.6 * clamp((p - 0.55) / 0.25) : 0;
+    const collLevel = i > 3 ? 0.45 : i === 3 ? lerp(0.15, 0.5, p) + 0.02 * Math.sin(T * 3) : i === 2 ? 0.15 * clamp((p - 0.7) / 0.3) : 0;
+    // seconds since the heat trigger fired
+    const tau = i === 4 ? (p - TRIGGER_P) * STAGES[4].dur : i === 5 ? (1 - TRIGGER_P) * STAGES[4].dur + p * STAGES[5].dur : -1;
+    const shrink = ease(clamp(tau / 1.2));
+    const hw = lerp(NEEDLE_HW, 128, shrink);
+
+    // skin
+    rect(-9000, -9000, 12000, -EPI, COL.derm);
+    rect(-9000, -EPI, 12000, -SC, COL.epi);
+    rect(-9000, -SC, 12000, 0, COL.sc);
+    for (const [vx, vy] of VESSELS) { disc(vx, vy, 16, COL.red, 3); disc(vx, vy, 7, "#F3B6B3", 1.2); }
+
+    // sweat beads sitting on the skin before the pillars arrive
+    if (!touching && cam.s > 1.5) {
+      g.fillStyle = COL.water;
+      for (let k = 0; k < 40; k++) {
+        const bx = 740 + k * 4.1 + rnd(k) * 2.5, r = (1.1 + rnd(k + 50) * 1.2) * cam.s, squash = clamp(lift / 3, 0.25, 1);
+        g.beginPath(); g.ellipse(X(bx), Y(0), r / Math.sqrt(squash), r * squash, 0, Math.PI, 0); g.fill();
+      }
+    }
+
+    // patch body
+    const L = lift;
+    rect(0, RES_TOP + L, PATCH_W, BACK_TOP + L, COL.back);
+    rect(0, FILM_TOP + L, PATCH_W, RES_TOP + L, COL.res);
+    for (const [a, b] of ISLANDS) rect(a, COLL_D + L, b, FILM_TOP + L, COL.film);
+    for (const [a, b] of PILLARS) rect(a, PIL_H + L, b, COLL_D + L, COL.film);
+
+    // sweat in the collector channels and between the pillars
+    if (touching) {
+      for (const [a, b] of COLLECT) rect(a, 0, b, COLL_D * collLevel, COL.water);
+      for (const [a, b] of PILLARS) rect(a, 0, b, PIL_H * chanLevel, COL.water);
+      if (i === 3) {
+        g.fillStyle = "rgba(255,255,255,.9)";
+        for (const [a, b, dir] of PILLARS) for (let k = 0; k < 9; k++) {
+          const u = (k / 9 + T * 0.13) % 1, x = dir > 0 ? a + u * (b - a) : b - u * (b - a);
+          g.fillRect(X(x - 2.5), Y(2.6), 5 * cam.s, 1.1 * cam.s);
+        }
+        for (const [a, b] of COLLECT) for (let k = 0; k < 6; k++) for (const side of [0, 1]) {
+          const u = (k / 6 + T * 0.22) % 1, x = side ? b - u * 38 : a + u * 38;
+          if (x > 0 && x < PATCH_W) disc(x, 3 + 7 * u, 2.6 * (1 - u), "rgba(255,255,255,.9)");
+        }
+      }
+    }
+
+    // pillars
+    if (cam.s >= 0.5) {
+      g.fillStyle = COL.film;
+      for (const [a] of PILLARS) for (let k = 0; k < 16; k++) {
+        const x = a + 5 + k * PIL_P, sx = X(x);
+        if (sx > W || sx + PIL_W * cam.s < 0) continue;
+        g.fillRect(sx, Y(PIL_H + L) - 0.5, PIL_W * cam.s, PIL_H * cam.s + 0.5);
+      }
+      if (touching && cam.s > 2) {                       // the thin moisture film that does the gripping
+        g.strokeStyle = "#5AA7E8"; g.lineWidth = Math.max(2, 0.5 * cam.s);
+        g.beginPath(); g.moveTo(X(650), Y(0)); g.lineTo(X(850), Y(0)); g.stroke();
+      }
+    } else for (const [a, b] of PILLARS) rect(a, L, b, PIL_H + L, COL.film);
+
+    // needles
+    g.fillStyle = COL.needle;
+    for (const c of NEEDLES) {
+      g.beginPath(); g.moveTo(X(c - hw), Y(FILM_TOP + L)); g.lineTo(X(c + hw), Y(FILM_TOP + L)); g.lineTo(X(c), Y(FILM_TOP - NEEDLE_L + L)); g.closePath(); g.fill();
+    }
+    if (i === 4 && tau < 0) {                            // warming glow before the trigger
+      const c = NEEDLES[1]; g.fillStyle = `rgba(227,167,47,${0.35 * clamp(p / TRIGGER_P)})`;
+      g.beginPath(); g.moveTo(X(c - hw), Y(FILM_TOP)); g.lineTo(X(c + hw), Y(FILM_TOP)); g.lineTo(X(c), Y(FILM_TOP - NEEDLE_L)); g.closePath(); g.fill();
+    }
+
+    // drug leaving the needles and reaching the blood vessels
+    if (tau > 0) {
+      NEEDLES.forEach((c, n) => {
+        for (let k = 0; k < 70; k++) {
+          const id = n * 100 + k;
+          const born = k < 38 ? rnd(id) * 2.5 : 2.5 + rnd(id) * 10, life = 3.5 + rnd(id + 0.5) * 2, age = tau - born;
+          if (age < 0 || age > life) continue;
+          const u = age / life, f = 0.2 + rnd(id + 0.3) * 0.75, side = rnd(id + 0.7) < 0.5 ? -1 : 1;
+          const sx = c + side * hw * (1 - f), sy = FILM_TOP - NEEDLE_L * f;
+          let best = VESSELS[0], bd = 1e9;
+          for (const v of VESSELS) { const d = Math.hypot(v[0] - sx, v[1] - sy) + (Math.sign(v[0] - c) === side ? 0 : 400); if (d < bd) { bd = d; best = v; } }
+          const e = Math.sqrt(u), wob = 14 * Math.sin(u * 7 + id) * (1 - u);
+          const px = lerp(sx, best[0] + (rnd(id + 0.1) - 0.5) * 30, e) + wob, py = lerp(sy, best[1] + (rnd(id + 0.2) - 0.5) * 30, e) + wob * 0.6;
+          g.globalAlpha = clamp(u / 0.08) * clamp((1 - u) / 0.15);
+          disc(px, py, 7, COL.drug, 2.2);
+        }
+      });
+      g.globalAlpha = 1;
+    }
+
+    // labels
+    if (i === 0) {
+      callout(1350 + 60, L - 250, "Needle: 500 µm long", 9, 2.5, fade(p, 0.25));
+      callout(2700, L + 200, "Patch body: about 0.4 mm thick", -9, -4.5, fade(p, 0.4));
+    } else if (i === 1) {
+      callout(820, -8, "Dead outer layer, about 15 µm: the barrier", -2, 4, fade(p, 0.82));
+      callout(1350, -440, "Needle tip is in the dermis", 9, 1.5, fade(p, 0.88));
+    } else if (i === 2) {
+      callout(792, 2.2 + L, "Pillar: 10 µm wide", -3, -5.5, fade(p, 0.3));
+      callout(810, 2.2 + L, "Channel: 2 µm wide", 6, -8.5, fade(p, 0.36));
+      callout(828, 0, "Thin moisture film: this is the grip", -1, 5.5, fade(p, 0.72));
+    } else if (i === 3) {
+      callout(900, 8, "Collector channel, 100 µm wide: leads to the patch edge", 0, 5.5, fade(p, 0.32));
+      callout(745, 2.2, "Sweat moves between the pillars", -4, -6, fade(p, 0.45));
+    } else if (i === 4) {
+      callout(1350, -150, tau > 0 ? "35 °C reached: the gel shrinks" : "Gel warming in the skin", -11, -3, fade(p, 0.12));
+      callout(1420, -300, "Drug squeezed out", 9, 3, fade(p, TRIGGER_P + 0.2));
+    } else {
+      callout(1100, -200, "Drug reaches small blood vessels", -3, 7, fade(p, 0.3));
+    }
+    scaleBar();
+    updatePanel(i, p, tau);
+  }
+
+  /* ---------- side panel ---------- */
+  const curveY = h => 0.45 * (1 - Math.exp(-h / 0.8)) + 0.55 * (1 - Math.exp(-h / 20));   // illustrative shape only
+  const cx = h => 34 + h / 48 * 274, cy = v => 134 - v * 110;
+  { let d = ""; for (let k = 0; k <= 140; k++) { const h = 48 * Math.pow(k / 140, 2); d += (k ? "L" : "M") + cx(h).toFixed(1) + " " + cy(curveY(h)).toFixed(1); } $("curve").setAttribute("d", d); }
+  STAGES.forEach((s, k) => {
+    const b = document.createElement("button"); b.textContent = k + 1; b.setAttribute("aria-label", `Step ${k + 1}: ${s.title}`);
+    b.onclick = () => { T = STARTS[k]; if (!playing) draw(); }; $("dots").appendChild(b);
+  });
+  function updatePanel(i, p, tau) {
+    if (i !== shownStage) {
+      shownStage = i; const s = STAGES[i];
+      $("stepno").textContent = `STEP ${i + 1} OF ${STAGES.length}`; $("title").textContent = s.title; $("caption").textContent = s.text;
+      $("chip").textContent = s.chip[0]; $("chip").style.background = s.chip[1];
+      [...$("dots").children].forEach((b, k) => b.setAttribute("aria-current", k === i ? "true" : "false"));
+    }
+    $("prog").style.width = (p * 100).toFixed(1) + "%";
+    const temp = [25, lerp(25, 28, p), lerp(28, 31, p), lerp(31, 33.5, p), lerp(33.5, 37, clamp(p / 0.7)), 37][i];
+    $("temp").textContent = temp.toFixed(1) + " °C";
+    $("fired").textContent = tau > 0 ? "Trigger fired" : "Trigger at 35-37 °C";
+    const hours = i === 4 ? 2 * clamp((p - TRIGGER_P) / (1 - TRIGGER_P)) : i === 5 ? 2 + 46 * p : 0;
+    $("clock").textContent = (hours < 2 ? hours.toFixed(1) : Math.round(hours)) + " h";
+    $("clip").setAttribute("width", (cx(hours) - 34 + 1).toFixed(1));
+    $("mark").setAttribute("cx", cx(hours).toFixed(1)); $("mark").setAttribute("cy", cy(curveY(hours)).toFixed(1));
+  }
+
+  /* ---------- controls and loop ---------- */
+  function setPlaying(v) {
+    playing = v; $("play").textContent = v ? "Pause" : "Play";
+    $("play").setAttribute("aria-label", v ? "Pause the animation" : "Play the animation");
+  }
+  $("play").onclick = () => setPlaying(!playing);
+  $("restart").onclick = () => { T = 0; setPlaying(true); };
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "BUTTON") return;
+    const [i] = locate();
+    if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+    else if (e.key === "ArrowRight") T = STARTS[(i + 1) % STAGES.length];
+    else if (e.key === "ArrowLeft") T = STARTS[(i + STAGES.length - 1) % STAGES.length];
+  });
+  setPlaying(playing);
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing) { T += dt; if (T >= TOTAL) T -= TOTAL; }
+    draw(); requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
